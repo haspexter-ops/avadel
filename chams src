@@ -1,0 +1,183 @@
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+
+local LocalPlayer = Players.LocalPlayer
+
+local Settings = {
+    ESP_Enabled = true,
+    ESP_TeamCheck = false,
+
+    Chams = true,
+    Chams_Color = Color3.fromRGB(0, 0, 255),
+    Chams_Transparency = 0.1,
+    Chams_Glow_Color = Color3.fromRGB(255, 0, 0),
+    Glow_Transparency = 0.35,
+}
+
+local tracked = {}
+local renderConnection
+
+local function removeCharacter(player)
+    local data = tracked[player]
+    if not data then return end
+
+    for _, connection in ipairs(data.connections) do
+        connection:Disconnect()
+    end
+
+    for _, adornments in pairs(data.parts) do
+        if adornments.chams then
+            adornments.chams:Destroy()
+        end
+        if adornments.glow then
+            adornments.glow:Destroy()
+        end
+    end
+
+    tracked[player] = nil
+end
+
+local function addPart(data, part)
+    if not part:IsA("BasePart") or part.Transparency >= 1 then
+        return
+    end
+
+    if data.parts[part] then
+        return
+    end
+
+    local size = part.Size + Vector3.new(0.02, 0.02, 0.02)
+
+    local chams = Instance.new("BoxHandleAdornment")
+    chams.Name = "Chams"
+    chams.Adornee = part
+    chams.AlwaysOnTop = true
+    chams.ZIndex = 4
+    chams.Color3 = Settings.Chams_Color
+    chams.Transparency = Settings.Chams_Transparency
+    chams.Size = size
+    chams.Parent = part
+
+    local glow = Instance.new("BoxHandleAdornment")
+    glow.Name = "Glow"
+    glow.Adornee = part
+    glow.AlwaysOnTop = false
+    glow.ZIndex = 3
+    glow.Color3 = Settings.Chams_Glow_Color
+    glow.Transparency = Settings.Glow_Transparency
+    glow.Size = size + Vector3.new(0.13, 0.13, 0.13)
+    glow.Parent = part
+
+    data.parts[part] = {
+        chams = chams,
+        glow = glow,
+    }
+end
+
+local function setupCharacter(player, character)
+    removeCharacter(player)
+
+    local data = {
+        character = character,
+        parts = {},
+        connections = {},
+    }
+
+    tracked[player] = data
+
+    local function tryAdd(instance)
+        if instance:IsA("BasePart") then
+            addPart(data, instance)
+        end
+    end
+
+    for _, instance in ipairs(character:GetDescendants()) do
+        tryAdd(instance)
+    end
+
+    table.insert(data.connections, character.DescendantAdded:Connect(tryAdd))
+end
+
+local function updatePlayer(player)
+    if player == LocalPlayer then return end
+
+    local character = player.Character
+    local data = tracked[player]
+
+    if not Settings.ESP_Enabled
+        or not Settings.Chams
+        or not character
+    then
+        removeCharacter(player)
+        return
+    end
+
+    if not data or data.character ~= character then
+        setupCharacter(player, character)
+        data = tracked[player]
+    end
+
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    local root = character:FindFirstChild("HumanoidRootPart")
+
+    local visible = humanoid
+        and root
+        and humanoid.Health > 0
+        and not (
+            Settings.ESP_TeamCheck
+            and player.Team == LocalPlayer.Team
+        )
+
+    for _, adornments in pairs(data.parts) do
+        local enabled = visible == true
+
+        if adornments.chams then
+            adornments.chams.Visible = enabled
+            adornments.chams.Color3 = Settings.Chams_Color
+            adornments.chams.Transparency = Settings.Chams_Transparency
+        end
+
+        if adornments.glow then
+            adornments.glow.Visible = enabled
+            adornments.glow.Color3 = Settings.Chams_Glow_Color
+            adornments.glow.Transparency = Settings.Glow_Transparency
+        end
+    end
+end
+
+Players.PlayerRemoving:Connect(removeCharacter)
+
+Players.PlayerAdded:Connect(function(player)
+    player.CharacterAdded:Connect(function(character)
+        setupCharacter(player, character)
+    end)
+end)
+
+for _, player in ipairs(Players:GetPlayers()) do
+    if player ~= LocalPlayer then
+        player.CharacterAdded:Connect(function(character)
+            setupCharacter(player, character)
+        end)
+
+        if player.Character then
+            setupCharacter(player, player.Character)
+        end
+    end
+end
+
+renderConnection = RunService.RenderStepped:Connect(function()
+    for _, player in ipairs(Players:GetPlayers()) do
+        updatePlayer(player)
+    end
+end)
+
+script.Destroying:Connect(function()
+    if renderConnection then
+        renderConnection:Disconnect()
+    end
+
+    for player in pairs(tracked) do
+        removeCharacter(player)
+    end
+end)
